@@ -7,7 +7,7 @@ from datetime import datetime
 try:
     from cStringIO import StringIO
 except ImportError:
-    from StringIO import StringIO
+    from io import StringIO
 
 from pybrowscap.loader import Browscap, TYPE_CSV
 
@@ -43,45 +43,63 @@ def load_file(browscap_file_path):
 
         """
         new_line = {}
-        for feature, value in line.iteritems():
+        try:
+            items = line.iteritems()
+        except AttributeError:
+            items = line.items()
+            
+        for feature, value in items:
+            feature = feature.lower()
             if value == 'default' or value == '':
-                value = defaults.get(feature, value)
+                try:
+                    value = defaults[feature]
+                except KeyError:
+                    value = ''
             if value == 'true':
                 value = True
             if value == 'false':
                 value = False
-            if feature == 'MinorVer' and value == '0':
-                value = defaults.get(feature, value)
-            if feature == 'MajorVer' or feature == 'MinorVer':
+            if feature == 'minorver' and value == '0':
+                value = defaults[feature]
+            if feature == 'majorver' or feature == 'minorver':
                 try:
                     value = int(value)
                 except (ValueError, OverflowError):
                     value = 0
-            if (feature == 'Version' or feature == 'RenderingEngine_Version') and value == '0':
-                value = defaults.get(feature, value)
-            if (feature == 'CSSVersion' or feature == 'AolVersion' or feature == 'Version' or
-                feature == 'RenderingEngine_Version' or feature == 'Platform_Version'):
+            if (feature == 'version' or feature == 'renderingengine_version') and value == '0':
+                value = defaults[feature]
+            if (feature == 'cssversion' or feature == 'aolversion' or feature == 'version' or
+                feature == 'renderingengine_version' or feature == 'platform_version'):
                 try:
                     value = float(value)
                 except (ValueError, OverflowError):
                     value = float(0)
             new_line[feature.lower()] = value
         return new_line
+
     try:
-        with open(browscap_file_path, 'rb') as csvfile:
+        with open(browscap_file_path, 'r') as csvfile:
             log.info('Reading browscap source file %s', browscap_file_path)
             dialect = csv.Sniffer().sniff(csvfile.read(4096))
             csvfile.seek(0)
             log.info('Getting file version and release date')
             csvfile.readline()
-            line = csv.reader(StringIO(csvfile.readline())).next()
+            try:
+                # line = csv.reader(StringIO(csvfile.readline())).next()
+                reader = csv.reader(StringIO(csvfile.readline()))
+                for row in reader:
+                    line = row
+                    break
+            except AttributeError as e:
+                log.info("[ERROR]: ")
+                log.info(e)
+
             log.info('Getting browcap file version')
             try:
                 version = int(line[0])
             except ValueError:
                 log.exception('Error while getting browscap file version')
                 version = None
-            log.info("Browscap Version: {}".format(version))
             log.info('Getting browscap file release date')
             try:
                 old_locale = locale.getlocale()
@@ -92,19 +110,20 @@ def load_file(browscap_file_path):
                 release_date = None
             finally:
                 locale.setlocale(locale.LC_TIME, old_locale)
-            log.info("Browscap Release Date: {}".format(release_date))
 
             log.info('Reading browscap user-agent data')
             reader = csv.DictReader(csvfile, dialect=dialect)
             defaults = {}
             browscap_data = {}
             regex_cache = []
+
             for line in reader:
                 if line['PropertyName'] == 'DefaultProperties':
-                    defaults = line
-                    continue
-                if line['Parent'] == 'DefaultProperties':
-                    continue
+                    for key in line:
+                        defaults[key.lower()] = line[key]
+                    break
+                    
+            for line in reader:
                 line = replace_defaults(line, defaults)
                 try:
                     ua_regex = '^{0}$'.format(re.escape(line['propertyname']))
